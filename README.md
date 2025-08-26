@@ -53,21 +53,19 @@ The script will automatically install these packages:
 
 ### For VPS (Replace Ubuntu completely)
 
-Replace `"yourPassword"` with your desired admin password:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR" --force
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash
 ```
 
 ### For dedicated server with separate disk
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR"
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash
 ```
 
 ## 📖 Usage
 
-Simply replace `"yourPassword"` with your desired admin password in the installation command above. The script will automatically detect your network configuration and install MikroTik CHR with default settings.
+The script will automatically detect your network configuration and install MikroTik CHR with default settings. RouterOS will be configured with the default admin user and no password.
 
 ## 🔍 What the Script Does
 
@@ -86,7 +84,6 @@ Simply replace `"yourPassword"` with your desired admin password in the installa
 3. **Configuration Phase**
    - Mounts CHR filesystem via NBD
    - Configures network settings (IP, gateway, DNS)
-   - Sets admin password
    - Creates autorun script for first boot
    - Extends partition and filesystem
 
@@ -125,7 +122,7 @@ After installation and reboot:
 
 2. **Default Credentials**:
    - Username: `admin`
-   - Password: The password you specified during installation
+   - Password: No password (empty)
 
 3. **First Steps**:
    - Change default configuration as needed
@@ -142,7 +139,7 @@ If you encounter segmentation faults during the installation process (especially
 **Solution:** Use the `--force` option which implements VPS-specific optimizations:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR" --force
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash
 ```
 
 The `--force` mode:
