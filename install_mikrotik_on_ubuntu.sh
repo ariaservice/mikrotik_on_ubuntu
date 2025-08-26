@@ -1,63 +1,77 @@
 #!/bin/bash
 
-# MikroTik RouterOS CHR Installation Script for Ubuntu
-# This script installs MikroTik RouterOS CHR on Ubuntu systems
-# WARNING: This will overwrite the target disk completely!
+# MikroTik RouterOS CHR Auto Installation Script
+# This script automatically installs MikroTik RouterOS CHR, replacing the current OS
+# WARNING: This will completely destroy the current operating system!
 
-set -euo pipefail  # Exit on error, undefined vars, pipe failures
+set -euo pipefail
 
 # Configuration
 ROUTEROS_VERSION="7.19.4"
 CHR_IMAGE_URL="https://download.mikrotik.com/routeros/${ROUTEROS_VERSION}/chr-${ROUTEROS_VERSION}.img.zip"
 TEMP_DIR="/tmp/mikrotik_install"
 NBD_DEVICE="/dev/nbd0"
+INSTALL_LOG="/tmp/mikrotik_install.log"
 
-# Color codes for output
+# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Function to print colored output
-print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Logging function
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$INSTALL_LOG"
+}
 
-# Function to show usage
+print_info() { echo -e "${GREEN}[INFO]${NC} $1" | tee -a "$INSTALL_LOG"; }
+print_warn() { echo -e "${YELLOW}[WARN]${NC} $1" | tee -a "$INSTALL_LOG"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1" | tee -a "$INSTALL_LOG"; }
+print_step() { echo -e "${BLUE}[STEP]${NC} $1" | tee -a "$INSTALL_LOG"; }
+
 show_usage() {
     cat << EOF
-Usage: $0 <PASSWORD> <SERVICE> [OPTIONS]
+Usage: $0 <PASSWORD> [OPTIONS]
 
 Arguments:
-  PASSWORD    Admin password for MikroTik RouterOS
-  SERVICE     Service type (must be one of: Mikrotik, mikrotik, "Mikrotik CHR")
+  PASSWORD    Admin password for MikroTik RouterOS (required)
 
 Options:
   -v VERSION  RouterOS version (default: ${ROUTEROS_VERSION})
   -d DISK     Target disk (auto-detected if not specified)
-  -y          Skip confirmation prompts (dangerous!)
-  --force     Force installation on mounted disk (EXTREMELY DANGEROUS!)
+  -i IP/MASK  Static IP address (CIDR format, e.g., 192.168.1.100/24)
+  -g GATEWAY  Gateway IP address
+  -n DNS      DNS servers (comma-separated, default: 1.1.1.1,1.0.0.1)
+  --dhcp      Use DHCP instead of static IP (default: use current config)
+  --force     Force installation (skip all confirmations)
+  --dry-run   Show what would be done without executing
   -h          Show this help
 
-Example:
-  $0 "mypassword" "Mikrotik"
-  $0 "mypassword" "Mikrotik CHR" -v 7.20.1 -d sda
-  $0 "mypassword" "Mikrotik CHR" --force  # For VPS replacement
+Examples:
+  $0 "mypassword123" --force
+  $0 "mypassword123" -i 192.168.1.100/24 -g 192.168.1.1 --force
+  $0 "mypassword123" -v 7.20.1 -d sda --dhcp --force
+  $0 "mypassword123" --dry-run
 
-WARNING: This script will completely overwrite the target disk!
-The --force option allows installation on mounted disks (like VPS root disk).
+WARNING: This will completely replace your current operating system!
+Use --force to skip all confirmations (recommended for automation).
 EOF
 }
 
-# Function to cleanup on exit
 cleanup() {
     local exit_code=$?
-    print_info "Cleaning up..."
+    print_info "Performing cleanup..."
     
-    # Unmount if mounted
-    if mountpoint -q /mnt 2>/dev/null; then
-        umount /mnt 2>/dev/null || true
-    fi
+    # Kill any background processes
+    jobs -p | xargs -r kill 2>/dev/null || true
+    
+    # Unmount filesystems
+    for mount_point in /mnt/mikrotik /mnt; do
+        if mountpoint -q "$mount_point" 2>/dev/null; then
+            umount -l "$mount_point" 2>/dev/null || true
+        fi
+    done
     
     # Disconnect NBD
     if [ -b "$NBD_DEVICE" ]; then
@@ -65,26 +79,18 @@ cleanup() {
     fi
     
     # Remove temp directory
-    if [ -d "$TEMP_DIR" ]; then
-        rm -rf "$TEMP_DIR" 2>/dev/null || true
-    fi
-    
-    # Safe sync in cleanup - avoid in force mode
-    if [ "$FORCE" != "yes" ]; then
-        sync 2>/dev/null || true
-    fi
+    rm -rf "$TEMP_DIR" 2>/dev/null || true
     
     if [ $exit_code -ne 0 ]; then
-        print_error "Script failed with exit code $exit_code"
+        print_error "Installation failed with exit code $exit_code"
+        print_error "Log file: $INSTALL_LOG"
     fi
     
     exit $exit_code
 }
 
-# Set trap for cleanup
 trap cleanup EXIT INT TERM
 
-# Function to check if running as root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         print_error "This script must be run as root"
@@ -92,32 +98,40 @@ check_root() {
     fi
 }
 
-# Function to validate service type
-validate_service() {
-    local service="$1"
-    local valid_services=("Mikrotik" "mikrotik" "Mikrotik CHR")
+check_environment() {
+    print_step "Checking system environment..."
     
-    for valid in "${valid_services[@]}"; do
-        if [ "$service" = "$valid" ]; then
-            return 0
-        fi
-    done
+    # Check if we're in a container
+    if [ -f /.dockerenv ] || grep -q container=lxc /proc/1/environ 2>/dev/null; then
+        print_error "Cannot install RouterOS CHR in a container environment"
+        exit 1
+    fi
     
-    print_error "Invalid service type: $service"
-    print_error "Valid options: ${valid_services[*]}"
-    exit 1
+    # Check system architecture
+    local arch=$(uname -m)
+    if [ "$arch" != "x86_64" ]; then
+        print_error "RouterOS CHR requires x86_64 architecture, found: $arch"
+        exit 1
+    fi
+    
+    # Check available memory
+    local mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+    local mem_mb=$((mem_kb / 1024))
+    if [ "$mem_mb" -lt 256 ]; then
+        print_error "RouterOS CHR requires at least 256MB RAM, found: ${mem_mb}MB"
+        exit 1
+    fi
+    
+    print_info "Environment check passed"
 }
 
-# Function to detect network interface
-detect_network_interface() {
-    local interface
+detect_network_config() {
+    print_step "Detecting current network configuration..."
     
-    # Try to find the default route interface
-    interface=$(ip route show default | awk '/default/ {print $5}' | head -n1)
-    
+    # Find primary interface
+    local interface=$(ip route show default | awk '/default/ {print $5}' | head -n1)
     if [ -z "$interface" ]; then
-        # Fallback to first non-loopback interface
-        interface=$(ip link show | awk -F': ' '/^[0-9]+: [^lo]/ {print $2}' | head -n1)
+        interface=$(ip -o link show | awk -F': ' '$2 !~ /lo|docker|br-|veth/ {print $2; exit}')
     fi
     
     if [ -z "$interface" ]; then
@@ -125,204 +139,338 @@ detect_network_interface() {
         exit 1
     fi
     
-    echo "$interface"
+    # Get current IP configuration
+    local current_ip=$(ip addr show "$interface" | grep 'inet ' | awk '{print $2}' | head -n1)
+    local current_gw=$(ip route show default | awk '{print $3}' | head -n1)
+    local current_dns=$(grep nameserver /etc/resolv.conf | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
+    
+    print_info "Primary interface: $interface"
+    print_info "Current IP: ${current_ip:-DHCP}"
+    print_info "Current Gateway: ${current_gw:-auto}"
+    print_info "Current DNS: ${current_dns:-system}"
+    
+    echo "$interface|$current_ip|$current_gw|$current_dns"
 }
 
-# Function to detect target disk
 detect_target_disk() {
-    local disk
-    disk=$(lsblk -d -n -o NAME | grep -E '^(sda|vda|nvme0n1)$' | head -n1)
+    print_step "Detecting target disk..."
     
-    if [ -z "$disk" ]; then
+    # Find the disk containing the root filesystem
+    local root_disk=$(lsblk -no PKNAME $(findmnt -no SOURCE /) | head -n1)
+    
+    if [ -z "$root_disk" ]; then
+        # Fallback detection
+        root_disk=$(lsblk -d -n -o NAME | grep -E '^(sda|vda|nvme0n1)$' | head -n1)
+    fi
+    
+    if [ -z "$root_disk" ]; then
         print_error "Could not detect target disk"
         print_error "Available disks:"
-        lsblk -d -n -o NAME,SIZE,TYPE
+        lsblk -d -o NAME,SIZE,TYPE
         exit 1
     fi
     
-    echo "$disk"
-}
-
-# Function to check disk safety
-check_disk_safety() {
-    local disk="$1"
-    local force="$2"
-    local disk_path="/dev/$disk"
-    
-    if [ ! -b "$disk_path" ]; then
-        print_error "Disk $disk_path does not exist"
-        exit 1
-    fi
-    
-    # Check if disk is mounted
-    if mount | grep -q "^$disk_path"; then
-        if [ "$force" != "yes" ]; then
-            print_error "Disk $disk_path is currently mounted"
-            print_error "Mounted partitions:"
-            mount | grep "^$disk_path"
-            print_error "Use --force to override this check (WARNING: This will destroy the running system!)"
-            exit 1
-        else
-            print_warn "WARNING: Disk $disk_path is currently mounted but --force was specified"
-            print_warn "This will completely destroy the running system!"
-            mount | grep "^$disk_path"
-        fi
-    fi
-    
-    # Check disk size (should be at least 1GB)
-    local size_bytes
-    size_bytes=$(lsblk -b -d -n -o SIZE "$disk_path")
-    local size_gb=$((size_bytes / 1024 / 1024 / 1024))
+    local disk_size=$(lsblk -b -d -n -o SIZE "/dev/$root_disk")
+    local size_gb=$((disk_size / 1024 / 1024 / 1024))
     
     if [ "$size_gb" -lt 1 ]; then
-        print_error "Disk $disk_path is too small (${size_gb}GB). Minimum 1GB required."
+        print_error "Target disk is too small: ${size_gb}GB (minimum 1GB required)"
         exit 1
     fi
     
-    print_info "Target disk: $disk_path (${size_gb}GB)"
+    print_info "Target disk: /dev/$root_disk (${size_gb}GB)"
+    echo "$root_disk"
 }
 
-# Function to install required packages
 install_dependencies() {
-    print_info "Installing required packages..."
+    print_step "Installing required packages..."
     
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        qemu-utils \
-        pv \
-        wget \
-        unzip \
-        e2fsprogs \
-        util-linux
+    # Update package list
+    export DEBIAN_FRONTEND=noninteractive
+    
+    # Detect package manager
+    if command -v apt-get >/dev/null; then
+        apt-get update -qq
+        apt-get install -y qemu-utils pv wget unzip e2fsprogs util-linux parted
+    elif command -v yum >/dev/null; then
+        yum install -y qemu-img pv wget unzip e2fsprogs util-linux parted
+    elif command -v dnf >/dev/null; then
+        dnf install -y qemu-img pv wget unzip e2fsprogs util-linux parted
+    else
+        print_error "Unsupported package manager. Please install manually: qemu-utils, pv, wget, unzip, e2fsprogs, util-linux, parted"
+        exit 1
+    fi
+    
+    # Load NBD module
+    modprobe nbd max_part=8 || {
+        print_error "Failed to load NBD module. Kernel may not support NBD."
+        exit 1
+    }
 }
 
-# Function to download and prepare CHR image
-prepare_chr_image() {
-    print_info "Downloading RouterOS CHR v${ROUTEROS_VERSION}..."
+download_chr_image() {
+    print_step "Downloading RouterOS CHR v${ROUTEROS_VERSION}..."
     
     mkdir -p "$TEMP_DIR"
     cd "$TEMP_DIR"
     
-    # Download CHR image
-    if ! wget -q --show-progress "$CHR_IMAGE_URL" -O chr.img.zip; then
-        print_error "Failed to download CHR image"
-        exit 1
+    # Check if already downloaded
+    if [ -f "chr-${ROUTEROS_VERSION}.img" ]; then
+        print_info "CHR image already exists, skipping download"
+        return 0
     fi
     
-    # Extract image
+    # Download with retry
+    local attempts=3
+    while [ $attempts -gt 0 ]; do
+        if wget --timeout=30 --tries=3 -q --show-progress "$CHR_IMAGE_URL" -O chr.img.zip; then
+            break
+        fi
+        attempts=$((attempts - 1))
+        if [ $attempts -eq 0 ]; then
+            print_error "Failed to download CHR image after multiple attempts"
+            exit 1
+        fi
+        print_warn "Download failed, retrying... ($attempts attempts left)"
+        sleep 5
+    done
+    
+    # Extract and verify
     print_info "Extracting CHR image..."
     if ! unzip -q chr.img.zip; then
         print_error "Failed to extract CHR image"
         exit 1
     fi
     
-    # Convert to qcow2 and resize
-    print_info "Converting and resizing image..."
-    qemu-img convert "chr-${ROUTEROS_VERSION}.img" -O qcow2 chr.qcow2
-    qemu-img resize chr.qcow2 1G
-}
-
-# Function to configure CHR
-configure_chr() {
-    local password="$1"
-    local interface="$2"
-    
-    print_info "Configuring CHR with network settings..."
-    
-    # Load NBD module
-    modprobe nbd max_part=8
-    
-    # Connect qcow2 image via NBD
-    qemu-nbd -c "$NBD_DEVICE" chr.qcow2
-    sleep 2
-    
-    # Update partition table
-    partprobe "$NBD_DEVICE"
-    sleep 2
-    
-    # Mount CHR filesystem
-    mkdir -p /mnt
-    mount "${NBD_DEVICE}p2" /mnt
-    
-    # Get network configuration
-    local address gateway
-    address=$(ip addr show "$interface" | grep 'inet ' | awk '{print $2}' | head -n1)
-    gateway=$(ip route show default | awk '{print $3}' | head -n1)
-    
-    if [ -z "$address" ] || [ -z "$gateway" ]; then
-        print_error "Could not determine network configuration"
+    if [ ! -f "chr-${ROUTEROS_VERSION}.img" ]; then
+        print_error "CHR image file not found after extraction"
+        ls -la
         exit 1
     fi
     
-    print_info "Network config: IP=$address, Gateway=$gateway"
-    
-    # Create autorun script
-    cat > /mnt/rw/autorun.scr << EOF
-/ip address add address=$address interface=[/interface ethernet find where name=ether1]
-/ip route add gateway=$gateway
-/ip service disable telnet
-/user set 0 name=admin password=$password
-/ip dns set servers=1.1.1.1,1.0.0.1
-/system package update install
-EOF
-    
-    # Unmount
-    umount /mnt
-    
-    # Extend partition
-    print_info "Extending partition..."
-    echo -e 'd\n2\nn\np\n2\n65537\n\nw\n' | fdisk "$NBD_DEVICE"
-    
-    # Check and resize filesystem
-    e2fsck -f -y "${NBD_DEVICE}p2" || true
-    resize2fs "${NBD_DEVICE}p2"
+    print_info "CHR image ready: $(ls -lh chr-${ROUTEROS_VERSION}.img | awk '{print $5}')"
 }
 
-# Function to write image to disk
-write_to_disk() {
+prepare_chr_image() {
+    print_step "Preparing CHR image..."
+    
+    cd "$TEMP_DIR"
+    
+    # Convert to qcow2 for easier handling
+    print_info "Converting image format..."
+    qemu-img convert "chr-${ROUTEROS_VERSION}.img" -O qcow2 chr.qcow2
+    
+    # Resize image to ensure enough space
+    print_info "Resizing image..."
+    qemu-img resize chr.qcow2 2G
+    
+    # Connect via NBD
+    qemu-nbd -c "$NBD_DEVICE" chr.qcow2
+    sleep 3
+    
+    # Ensure partition table is readable
+    partprobe "$NBD_DEVICE" 2>/dev/null || true
+    sleep 2
+    
+    # Verify partitions
+    if [ ! -b "${NBD_DEVICE}p1" ] || [ ! -b "${NBD_DEVICE}p2" ]; then
+        print_error "CHR partitions not detected"
+        qemu-nbd -d "$NBD_DEVICE"
+        exit 1
+    fi
+    
+    print_info "CHR image prepared successfully"
+}
+
+configure_chr_network() {
+    local password="$1"
+    local static_ip="$2"
+    local gateway="$3"
+    local dns_servers="$4"
+    local use_dhcp="$5"
+    local interface="$6"
+    
+    print_step "Configuring CHR network settings..."
+    
+    # Mount CHR filesystem
+    mkdir -p /mnt/mikrotik
+    if ! mount "${NBD_DEVICE}p2" /mnt/mikrotik; then
+        print_error "Failed to mount CHR filesystem"
+        exit 1
+    fi
+    
+    # Create autorun configuration script
+    local autorun_script="/mnt/mikrotik/rw/autorun.scr"
+    
+    cat > "$autorun_script" << 'EOF'
+# MikroTik RouterOS CHR Auto-Configuration Script
+# This script runs automatically on first boot
+
+# Set system identity
+/system identity set name="MikroTik-CHR"
+
+# Configure admin user with password
+EOF
+    
+    echo "/user set 0 name=admin password=\"$password\"" >> "$autorun_script"
+    
+    # Network configuration
+    if [ "$use_dhcp" = "yes" ]; then
+        cat >> "$autorun_script" << 'EOF'
+
+# Configure DHCP client
+/ip dhcp-client add interface=ether1 disabled=no
+
+EOF
+    else
+        if [ -n "$static_ip" ] && [ -n "$gateway" ]; then
+            cat >> "$autorun_script" << EOF
+
+# Configure static IP
+/ip address add address=$static_ip interface=ether1
+/ip route add gateway=$gateway
+
+EOF
+        else
+            print_warn "No static IP configuration provided, using DHCP as fallback"
+            echo "/ip dhcp-client add interface=ether1 disabled=no" >> "$autorun_script"
+        fi
+    fi
+    
+    # DNS configuration
+    if [ -n "$dns_servers" ]; then
+        echo "/ip dns set servers=$dns_servers allow-remote-requests=yes" >> "$autorun_script"
+    else
+        echo "/ip dns set servers=1.1.1.1,1.0.0.1 allow-remote-requests=yes" >> "$autorun_script"
+    fi
+    
+    # Security hardening
+    cat >> "$autorun_script" << 'EOF'
+
+# Disable unnecessary services
+/ip service disable telnet
+/ip service disable ftp
+/ip service disable www
+/tool mac-server set allowed-interface-list=none
+/tool mac-server mac-winbox set allowed-interface-list=none
+/tool mac-server ping set enabled=no
+
+# Enable only secure services
+/ip service set ssh port=22 disabled=no
+/ip service set winbox port=8291 disabled=no
+/ip service set api port=8728 disabled=no
+
+# Configure firewall
+/ip firewall filter add chain=input action=accept connection-state=established,related
+/ip firewall filter add chain=input action=accept protocol=icmp
+/ip firewall filter add chain=input action=accept src-address=10.0.0.0/8
+/ip firewall filter add chain=input action=accept src-address=172.16.0.0/12
+/ip firewall filter add chain=input action=accept src-address=192.168.0.0/16
+/ip firewall filter add chain=input action=drop
+
+# Update system packages
+/system package update check-for-updates
+/system package update download
+
+# Log successful configuration
+/log info "CHR auto-configuration completed successfully"
+
+EOF
+    
+    # Make sure the script is executable and properly formatted
+    chmod +x "$autorun_script"
+    
+    # Unmount
+    umount /mnt/mikrotik
+    
+    print_info "CHR configuration completed"
+}
+
+extend_chr_filesystem() {
+    print_step "Extending CHR filesystem..."
+    
+    # Extend the partition to use available space
+    print_info "Extending partition table..."
+    
+    # Use parted for reliable partition extension
+    parted -s "$NBD_DEVICE" resizepart 2 100% || {
+        print_warn "Parted resize failed, trying fdisk method..."
+        
+        # Fallback to fdisk method
+        echo -e 'd\n2\nn\np\n2\n65537\n\nw\n' | fdisk "$NBD_DEVICE" 2>/dev/null || true
+    }
+    
+    # Force kernel to re-read partition table
+    partprobe "$NBD_DEVICE" 2>/dev/null || true
+    sleep 2
+    
+    # Check and resize filesystem
+    print_info "Checking and resizing filesystem..."
+    e2fsck -f -y "${NBD_DEVICE}p2" 2>/dev/null || {
+        print_warn "Filesystem check failed, continuing anyway..."
+    }
+    
+    if ! resize2fs "${NBD_DEVICE}p2" 2>/dev/null; then
+        print_warn "Filesystem resize failed, but installation can continue"
+    fi
+    
+    print_info "Filesystem extension completed"
+}
+
+write_chr_to_disk() {
     local target_disk="$1"
     local target_path="/dev/$target_disk"
     
-    print_info "Writing CHR image to $target_path..."
+    print_step "Writing CHR image to target disk: $target_path"
     
-    # Create compressed image
-    mount -t tmpfs tmpfs /mnt
-    pv "$NBD_DEVICE" | gzip > /mnt/chr-extended.gz
+    # Create a compressed image in memory for faster writing
+    print_info "Preparing compressed image..."
     
-    # Disconnect NBD
+    # Use tmpfs for faster operations
+    mount -t tmpfs tmpfs /mnt -o size=1G
+    
+    # Create compressed backup
+    print_info "Creating compressed image (this may take a few minutes)..."
+    pv "$NBD_DEVICE" | gzip -1 > /mnt/chr-ready.gz
+    
+    # Disconnect NBD before writing
     qemu-nbd -d "$NBD_DEVICE"
-    sleep 1
-    
-    # Safe sync - avoid sync on VPS systems that might cause segfaults
-    if [ "$FORCE" = "yes" ]; then
-        print_warn "Skipping filesystem sync due to --force mode (VPS installation)"
-    else
-        sync
-    fi
-    
-    # Write to target disk
-    print_info "Writing to disk (this may take several minutes)..."
-    if [ "$FORCE" = "yes" ]; then
-        # Use dd for safer VPS installation
-        print_warn "Using direct disk write method for VPS installation"
-        zcat /mnt/chr-extended.gz | pv | dd of="$target_path" bs=1M conv=fdatasync 2>/dev/null
-    else
-        # Standard method for dedicated servers
-        zcat /mnt/chr-extended.gz | pv > "$target_path"
-    fi
-    
-    # Final sync - also skip in force mode
-    if [ "$FORCE" = "yes" ]; then
-        print_warn "Skipping final sync due to --force mode"
-        print_info "Forcing disk buffer flush..."
-        echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-    else
-        sync
-    fi
     sleep 2
     
+    # Show final warning
+    print_warn "FINAL WARNING: About to overwrite $target_path"
+    print_warn "This will completely destroy the current operating system!"
+    print_warn "The system will reboot automatically after installation."
+    
+    if [ "$FORCE_INSTALL" != "yes" ]; then
+        echo -n "Type 'DESTROY' to confirm: "
+        read -r final_confirm
+        if [ "$final_confirm" != "DESTROY" ]; then
+            print_info "Installation cancelled"
+            exit 0
+        fi
+    fi
+    
+    # Point of no return - disable all possible interrupts
+    trap '' INT TERM
+    
+    print_info "STARTING DISK WRITE - DO NOT INTERRUPT!"
+    print_info "Writing compressed image to $target_path..."
+    
+    # Write to disk with progress
+    zcat /mnt/chr-ready.gz | pv -s $(gzip -l /mnt/chr-ready.gz | tail -n1 | awk '{print $2}') | dd of="$target_path" bs=1M conv=fdatasync 2>/dev/null
+    
+    # Force filesystem sync
+    sync
+    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    
     print_info "Installation completed successfully!"
-    print_warn "System will reboot in 10 seconds..."
+    print_info "RouterOS CHR has been installed on $target_path"
+    
+    # Clean up
+    umount /mnt
+    
+    print_warn "System will reboot in 10 seconds to boot into RouterOS CHR..."
     
     # Countdown
     for i in {10..1}; do
@@ -331,64 +479,81 @@ write_to_disk() {
     done
     echo
     
-    # Clean reboot
-    print_info "Rebooting system..."
-    /sbin/reboot
+    # Final log
+    log "MikroTik CHR installation completed successfully on $target_path"
+    
+    # Reboot
+    print_info "Rebooting to RouterOS CHR..."
+    exec /sbin/reboot -f
 }
 
-# Main function
-main() {
+show_dry_run() {
     local password="$1"
-    local service="$2"
-    local target_disk="$3"
-    local skip_confirm="$4"
-    local force="$5"
+    local target_disk="$2"
+    local network_config="$3"
     
-    print_info "MikroTik RouterOS CHR Installation Script"
-    print_info "Version: $ROUTEROS_VERSION"
+    IFS='|' read -r interface current_ip current_gw current_dns <<< "$network_config"
     
-    # Validate inputs
-    validate_service "$service"
-    
-    # Detect network interface
-    local interface
-    interface=$(detect_network_interface)
-    print_info "Detected network interface: $interface"
-    
-    # Detect or validate target disk
-    if [ -z "$target_disk" ]; then
-        target_disk=$(detect_target_disk)
-        print_info "Auto-detected target disk: $target_disk"
-    fi
-    
-    # Safety checks
-    check_disk_safety "$target_disk" "$force"
-    
-    # Confirmation prompt
-    if [ "$skip_confirm" != "yes" ]; then
-        print_warn "WARNING: This will completely erase disk /dev/$target_disk!"
-        print_warn "All data on this disk will be permanently lost!"
-        echo -n "Are you sure you want to continue? (type 'yes' to confirm): "
-        read -r confirm
-        if [ "$confirm" != "yes" ]; then
-            print_info "Installation cancelled by user"
-            exit 0
+    cat << EOF
+
+=== DRY RUN - MIKROTIK CHR INSTALLATION PLAN ===
+
+System Information:
+  - Architecture: $(uname -m)
+  - Memory: $(awk '/MemTotal/ {printf "%.1fGB", $2/1024/1024}' /proc/meminfo)
+  - Current OS: $([ -f /etc/os-release ] && . /etc/os-release && echo "$PRETTY_NAME" || uname -s)
+
+Installation Configuration:
+  - RouterOS Version: $ROUTEROS_VERSION
+  - Target Disk: /dev/$target_disk
+  - Admin Password: [SET]
+  - Network Interface: $interface
+
+Network Configuration:
+EOF
+
+    if [ "$USE_DHCP" = "yes" ]; then
+        echo "  - IP Configuration: DHCP"
+    else
+        echo "  - Current IP: ${current_ip:-DHCP}"
+        echo "  - Current Gateway: ${current_gw:-auto}"
+        if [ -n "$STATIC_IP" ]; then
+            echo "  - New IP: $STATIC_IP"
+            echo "  - New Gateway: $GATEWAY"
+        else
+            echo "  - IP Mode: Keep current static config"
         fi
     fi
     
-    # Execute installation steps
-    install_dependencies
-    prepare_chr_image
-    configure_chr "$password" "$interface"
-    write_to_disk "$target_disk"
+    echo "  - DNS Servers: ${DNS_SERVERS:-1.1.1.1,1.0.0.1}"
+    
+    cat << EOF
+
+Installation Steps:
+  1. Install required packages (qemu-utils, pv, wget, unzip, etc.)
+  2. Download RouterOS CHR v${ROUTEROS_VERSION}
+  3. Convert and prepare CHR image
+  4. Configure network settings and admin password
+  5. Extend filesystem to use full disk
+  6. Write CHR image to /dev/$target_disk
+  7. Reboot system into RouterOS CHR
+
+WARNING: This will completely destroy the current operating system!
+Use --force to execute the installation without confirmation prompts.
+
+EOF
 }
 
 # Parse command line arguments
-PASSWORD=""
-SERVICE=""
+ADMIN_PASSWORD=""
+ROUTEROS_VERSION="7.19.4"
 TARGET_DISK=""
-SKIP_CONFIRM="no"
-FORCE="no"
+STATIC_IP=""
+GATEWAY=""
+DNS_SERVERS=""
+USE_DHCP="no"
+FORCE_INSTALL="no"
+DRY_RUN="no"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -401,12 +566,28 @@ while [[ $# -gt 0 ]]; do
             TARGET_DISK="$2"
             shift 2
             ;;
-        -y|--yes)
-            SKIP_CONFIRM="yes"
+        -i|--ip)
+            STATIC_IP="$2"
+            shift 2
+            ;;
+        -g|--gateway)
+            GATEWAY="$2"
+            shift 2
+            ;;
+        -n|--dns)
+            DNS_SERVERS="$2"
+            shift 2
+            ;;
+        --dhcp)
+            USE_DHCP="yes"
             shift
             ;;
         --force)
-            FORCE="yes"
+            FORCE_INSTALL="yes"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN="yes"
             shift
             ;;
         -h|--help)
@@ -419,10 +600,8 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            if [ -z "$PASSWORD" ]; then
-                PASSWORD="$1"
-            elif [ -z "$SERVICE" ]; then
-                SERVICE="$1"
+            if [ -z "$ADMIN_PASSWORD" ]; then
+                ADMIN_PASSWORD="$1"
             else
                 print_error "Too many arguments"
                 show_usage
@@ -434,14 +613,80 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate required arguments
-if [ -z "$PASSWORD" ] || [ -z "$SERVICE" ]; then
-    print_error "Missing required arguments"
+if [ -z "$ADMIN_PASSWORD" ]; then
+    print_error "Admin password is required"
     show_usage
     exit 1
 fi
 
-# Check if running as root
-check_root
+# Validate password strength
+if [ ${#ADMIN_PASSWORD} -lt 6 ]; then
+    print_error "Password must be at least 6 characters long"
+    exit 1
+fi
+
+# Main execution
+main() {
+    print_info "MikroTik RouterOS CHR Auto-Installer"
+    log "Installation started by user: $(whoami)"
+    
+    # Pre-flight checks
+    check_root
+    check_environment
+    
+    # Detect system configuration
+    local network_config=$(detect_network_config)
+    IFS='|' read -r interface current_ip current_gw current_dns <<< "$network_config"
+    
+    if [ -z "$TARGET_DISK" ]; then
+        TARGET_DISK=$(detect_target_disk)
+    fi
+    
+    # Validate network configuration
+    if [ "$USE_DHCP" != "yes" ] && [ -n "$STATIC_IP" ]; then
+        if [ -z "$GATEWAY" ]; then
+            print_error "Gateway is required when using static IP"
+            exit 1
+        fi
+    fi
+    
+    # Show dry run if requested
+    if [ "$DRY_RUN" = "yes" ]; then
+        show_dry_run "$ADMIN_PASSWORD" "$TARGET_DISK" "$network_config"
+        exit 0
+    fi
+    
+    # Final confirmation
+    if [ "$FORCE_INSTALL" != "yes" ]; then
+        cat << EOF
+
+=== FINAL CONFIRMATION ===
+This will install MikroTik RouterOS CHR v${ROUTEROS_VERSION}
+Target disk: /dev/$TARGET_DISK
+Network interface: $interface
+
+WARNING: This will COMPLETELY DESTROY your current operating system!
+All data on /dev/$TARGET_DISK will be permanently lost!
+
+EOF
+        echo -n "Are you absolutely sure? Type 'yes' to continue: "
+        read -r confirm
+        if [ "$confirm" != "yes" ]; then
+            print_info "Installation cancelled"
+            exit 0
+        fi
+    fi
+    
+    # Execute installation
+    log "Starting automated MikroTik CHR installation"
+    
+    install_dependencies
+    download_chr_image
+    prepare_chr_image
+    configure_chr_network "$ADMIN_PASSWORD" "$STATIC_IP" "$GATEWAY" "$DNS_SERVERS" "$USE_DHCP" "$interface"
+    extend_chr_filesystem
+    write_chr_to_disk "$TARGET_DISK"
+}
 
 # Run main function
-main "$PASSWORD" "$SERVICE" "$TARGET_DISK" "$SKIP_CONFIRM" "$FORCE"
+main
