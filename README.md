@@ -32,11 +32,24 @@ The script will automatically install these packages:
 - `e2fsprogs` - For filesystem operations
 - `util-linux` - For disk utilities
 
+## 📥 Quick Installation
+
+### Direct Download and Run
+```bash
+# Download and run the script directly
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik"
+
+# Or download first, then run
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh -o install_mikrotik_on_ubuntu.sh
+chmod +x install_mikrotik_on_ubuntu.sh
+sudo ./install_mikrotik_on_ubuntu.sh "yourPassword" "Mikrotik"
+```
+
 ## 📖 Usage
 
 ### Basic Syntax
 ```bash
-sudo ./mikrotik_on_ubuntu.sh <PASSWORD> <SERVICE> [OPTIONS]
+sudo ./install_mikrotik_on_ubuntu.sh <PASSWORD> <SERVICE> [OPTIONS]
 ```
 
 ### Arguments
@@ -57,21 +70,21 @@ sudo ./mikrotik_on_ubuntu.sh <PASSWORD> <SERVICE> [OPTIONS]
 ### Basic Installation
 ```bash
 # Install with auto-detection
-sudo ./mikrotik_on_ubuntu.sh "mySecurePassword123" "Mikrotik"
+sudo ./install_mikrotik_on_ubuntu.sh "mySecurePassword123" "Mikrotik"
 ```
 
 ### Advanced Installation
 ```bash
 # Install specific version on specific disk
-sudo ./mikrotik_on_ubuntu.sh "myPassword" "Mikrotik CHR" -v 7.20.1 -d sda
+sudo ./install_mikrotik_on_ubuntu.sh "myPassword" "Mikrotik CHR" -v 7.20.1 -d sda
 
 # Silent installation (skip confirmations)
-sudo ./mikrotik_on_ubuntu.sh "myPassword" "mikrotik" -y
+sudo ./install_mikrotik_on_ubuntu.sh "myPassword" "mikrotik" -y
 ```
 
 ### Get Help
 ```bash
-./mikrotik_on_ubuntu.sh -h
+./install_mikrotik_on_ubuntu.sh -h
 ```
 
 ## 🔍 What the Script Does
@@ -145,9 +158,9 @@ After installation and reboot:
 **Script fails with "Permission denied"**
 ```bash
 # Make script executable
-chmod +x mikrotik_on_ubuntu.sh
+chmod +x install_mikrotik_on_ubuntu.sh
 # Run with sudo
-sudo ./mikrotik_on_ubuntu.sh ...
+sudo ./install_mikrotik_on_ubuntu.sh ...
 ```
 
 **"Could not detect network interface"**
