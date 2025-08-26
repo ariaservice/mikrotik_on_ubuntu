@@ -69,6 +69,11 @@ cleanup() {
         rm -rf "$TEMP_DIR" 2>/dev/null || true
     fi
     
+    # Safe sync in cleanup - avoid in force mode
+    if [ "$FORCE" != "yes" ]; then
+        sync 2>/dev/null || true
+    fi
+    
     if [ $exit_code -ne 0 ]; then
         print_error "Script failed with exit code $exit_code"
     fi
@@ -288,15 +293,32 @@ write_to_disk() {
     qemu-nbd -d "$NBD_DEVICE"
     sleep 1
     
-    # Sync filesystem
-    sync
+    # Safe sync - avoid sync on VPS systems that might cause segfaults
+    if [ "$FORCE" = "yes" ]; then
+        print_warn "Skipping filesystem sync due to --force mode (VPS installation)"
+    else
+        sync
+    fi
     
     # Write to target disk
     print_info "Writing to disk (this may take several minutes)..."
-    zcat /mnt/chr-extended.gz | pv > "$target_path"
+    if [ "$FORCE" = "yes" ]; then
+        # Use dd for safer VPS installation
+        print_warn "Using direct disk write method for VPS installation"
+        zcat /mnt/chr-extended.gz | pv | dd of="$target_path" bs=1M conv=fdatasync 2>/dev/null
+    else
+        # Standard method for dedicated servers
+        zcat /mnt/chr-extended.gz | pv > "$target_path"
+    fi
     
-    # Final sync
-    sync
+    # Final sync - also skip in force mode
+    if [ "$FORCE" = "yes" ]; then
+        print_warn "Skipping final sync due to --force mode"
+        print_info "Forcing disk buffer flush..."
+        echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    else
+        sync
+    fi
     sleep 2
     
     print_info "Installation completed successfully!"

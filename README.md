@@ -15,10 +15,21 @@ The installation process will:
 **Make sure you have backups of any important data before running this script!**
 
 ### VPS Users (--force option)
-- The `--force` option bypasses the mounted disk check
-- **EXTREMELY DANGEROUS**: This will destroy your running Ubuntu system
-- Only use on VPS where you want to completely replace the OS
-- Ensure you have console/recovery access before proceeding
+
+The `--force` option bypasses the mounted disk safety check and implements VPS-specific optimizations, allowing installation on VPS systems where the target disk is the currently running system. **This is extremely dangerous** as it will completely destroy the running operating system.
+
+**VPS-Specific Optimizations in --force mode:**
+- Skips filesystem sync operations that can cause segmentation faults on VPS systems
+- Uses direct disk write method (dd) for safer overwriting of the root disk
+- Implements alternative buffer flushing to avoid system crashes
+- Provides enhanced error handling for VPS environments
+
+**Use --force only if:**
+- You have console/recovery access to your VPS
+- You have backed up all important data
+- You understand that the system will be completely replaced
+- You are prepared for potential system failure requiring manual recovery
+- You have experienced segmentation faults with the standard installation method
 
 ## 🔧 Requirements
 
@@ -124,6 +135,22 @@ After installation and reboot:
 
 ## 🐛 Troubleshooting
 
+### Segmentation Fault During Installation
+
+If you encounter segmentation faults during the installation process (especially during sync operations), this is typically caused by attempting to sync the filesystem while overwriting the root disk on VPS systems.
+
+**Solution:** Use the `--force` option which implements VPS-specific optimizations:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR" --force
+```
+
+The `--force` mode:
+- Skips problematic sync operations
+- Uses safer disk writing methods
+- Implements alternative buffer management
+- Provides better error handling for VPS environments
+
 ### Common Issues
 
 **Script fails with "Permission denied"**
@@ -138,6 +165,7 @@ After installation and reboot:
 - Unmount all partitions on target disk
 - Use `lsblk` to check mounted partitions
 - Unmount with: `sudo umount /dev/sdXN`
+- For VPS installations, use the `--force` option
 
 **Download fails**
 - Check internet connection
