@@ -36,13 +36,16 @@ Options:
   -v VERSION  RouterOS version (default: ${ROUTEROS_VERSION})
   -d DISK     Target disk (auto-detected if not specified)
   -y          Skip confirmation prompts (dangerous!)
+  --force     Force installation on mounted disk (EXTREMELY DANGEROUS!)
   -h          Show this help
 
 Example:
   $0 "mypassword" "Mikrotik"
   $0 "mypassword" "Mikrotik CHR" -v 7.20.1 -d sda
+  $0 "mypassword" "Mikrotik CHR" --force  # For VPS replacement
 
 WARNING: This script will completely overwrite the target disk!
+The --force option allows installation on mounted disks (like VPS root disk).
 EOF
 }
 
@@ -138,6 +141,7 @@ detect_target_disk() {
 # Function to check disk safety
 check_disk_safety() {
     local disk="$1"
+    local force="$2"
     local disk_path="/dev/$disk"
     
     if [ ! -b "$disk_path" ]; then
@@ -147,10 +151,17 @@ check_disk_safety() {
     
     # Check if disk is mounted
     if mount | grep -q "^$disk_path"; then
-        print_error "Disk $disk_path is currently mounted"
-        print_error "Mounted partitions:"
-        mount | grep "^$disk_path"
-        exit 1
+        if [ "$force" != "yes" ]; then
+            print_error "Disk $disk_path is currently mounted"
+            print_error "Mounted partitions:"
+            mount | grep "^$disk_path"
+            print_error "Use --force to override this check (WARNING: This will destroy the running system!)"
+            exit 1
+        else
+            print_warn "WARNING: Disk $disk_path is currently mounted but --force was specified"
+            print_warn "This will completely destroy the running system!"
+            mount | grep "^$disk_path"
+        fi
     fi
     
     # Check disk size (should be at least 1GB)
@@ -309,6 +320,7 @@ main() {
     local service="$2"
     local target_disk="$3"
     local skip_confirm="$4"
+    local force="$5"
     
     print_info "MikroTik RouterOS CHR Installation Script"
     print_info "Version: $ROUTEROS_VERSION"
@@ -328,7 +340,7 @@ main() {
     fi
     
     # Safety checks
-    check_disk_safety "$target_disk"
+    check_disk_safety "$target_disk" "$force"
     
     # Confirmation prompt
     if [ "$skip_confirm" != "yes" ]; then
@@ -354,6 +366,7 @@ PASSWORD=""
 SERVICE=""
 TARGET_DISK=""
 SKIP_CONFIRM="no"
+FORCE="no"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -368,6 +381,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -y|--yes)
             SKIP_CONFIRM="yes"
+            shift
+            ;;
+        --force)
+            FORCE="yes"
             shift
             ;;
         -h|--help)
@@ -405,4 +422,4 @@ fi
 check_root
 
 # Run main function
-main "$PASSWORD" "$SERVICE" "$TARGET_DISK" "$SKIP_CONFIRM"
+main "$PASSWORD" "$SERVICE" "$TARGET_DISK" "$SKIP_CONFIRM" "$FORCE"

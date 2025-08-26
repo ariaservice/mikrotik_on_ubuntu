@@ -14,6 +14,12 @@ The installation process will:
 
 **Make sure you have backups of any important data before running this script!**
 
+### VPS Users (--force option)
+- The `--force` option bypasses the mounted disk check
+- **EXTREMELY DANGEROUS**: This will destroy your running Ubuntu system
+- Only use on VPS where you want to completely replace the OS
+- Ensure you have console/recovery access before proceeding
+
 ## 🔧 Requirements
 
 ### System Requirements
@@ -34,9 +40,17 @@ The script will automatically install these packages:
 
 ## 📥 Installation
 
-### Direct Download and Install CHR
+### For VPS (Replace Ubuntu completely)
+
+Replace `"yourPassword"` with your desired admin password:
+
 ```bash
-# Download and install MikroTik CHR directly
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR" --force
+```
+
+### For dedicated server with separate disk
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR"
 ```
 
