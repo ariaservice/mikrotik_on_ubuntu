@@ -32,60 +32,17 @@ The script will automatically install these packages:
 - `e2fsprogs` - For filesystem operations
 - `util-linux` - For disk utilities
 
-## 📥 Quick Installation
+## 📥 Installation
 
-### Direct Download and Run
+### Direct Download and Install CHR
 ```bash
-# Download and run the script directly
-curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik"
-
-# Or download first, then run
-curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh -o install_mikrotik_on_ubuntu.sh
-chmod +x install_mikrotik_on_ubuntu.sh
-sudo ./install_mikrotik_on_ubuntu.sh "yourPassword" "Mikrotik"
+# Download and install MikroTik CHR directly
+curl -fsSL https://raw.githubusercontent.com/ariaservice/mikrotik_on_ubuntu/master/install_mikrotik_on_ubuntu.sh | sudo bash -s -- "yourPassword" "Mikrotik CHR"
 ```
 
 ## 📖 Usage
 
-### Basic Syntax
-```bash
-sudo ./install_mikrotik_on_ubuntu.sh <PASSWORD> <SERVICE> [OPTIONS]
-```
-
-### Arguments
-- `PASSWORD` - Admin password for MikroTik RouterOS (required)
-- `SERVICE` - Service type, must be one of:
-  - `Mikrotik`
-  - `mikrotik` 
-  - `Mikrotik CHR`
-
-### Options
-- `-v VERSION` - RouterOS version to install (default: 7.19.4)
-- `-d DISK` - Target disk name (auto-detected if not specified)
-- `-y` - Skip confirmation prompts (dangerous!)
-- `-h` - Show help message
-
-## 📋 Examples
-
-### Basic Installation
-```bash
-# Install with auto-detection
-sudo ./install_mikrotik_on_ubuntu.sh "mySecurePassword123" "Mikrotik"
-```
-
-### Advanced Installation
-```bash
-# Install specific version on specific disk
-sudo ./install_mikrotik_on_ubuntu.sh "myPassword" "Mikrotik CHR" -v 7.20.1 -d sda
-
-# Silent installation (skip confirmations)
-sudo ./install_mikrotik_on_ubuntu.sh "myPassword" "mikrotik" -y
-```
-
-### Get Help
-```bash
-./install_mikrotik_on_ubuntu.sh -h
-```
+Simply replace `"yourPassword"` with your desired admin password in the installation command above. The script will automatically detect your network configuration and install MikroTik CHR with default settings.
 
 ## 🔍 What the Script Does
 
@@ -156,12 +113,8 @@ After installation and reboot:
 ### Common Issues
 
 **Script fails with "Permission denied"**
-```bash
-# Make script executable
-chmod +x install_mikrotik_on_ubuntu.sh
-# Run with sudo
-sudo ./install_mikrotik_on_ubuntu.sh ...
-```
+- Ensure you have sudo privileges
+- Check your internet connection for downloading the script
 
 **"Could not detect network interface"**
 - Ensure you have an active network connection
@@ -175,7 +128,6 @@ sudo ./install_mikrotik_on_ubuntu.sh ...
 **Download fails**
 - Check internet connection
 - Verify RouterOS version exists
-- Try different version with `-v` option
 
 ### Log Files
 The script provides colored output:
