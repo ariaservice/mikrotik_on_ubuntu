@@ -59,23 +59,33 @@ echo "/ip address add address=$ADDRESS interface=[/interface ethernet find where
 # Disable unnecessary services
 /ip service disable telnet
 /ip service disable ftp
-/ip service disable www
+/ip service disable ssh
 /tool mac-server set allowed-interface-list=none
 /tool mac-server mac-winbox set allowed-interface-list=none
 /tool mac-server ping set enabled=no
 
 # Enable only secure services
-/ip service set ssh port=22 disabled=no
 /ip service set winbox port=8291 disabled=no
-/ip service set api port=8728 disabled=no
+
 
 # Configure firewall
-/ip firewall filter add chain=input action=accept connection-state=established,related
-/ip firewall filter add chain=input action=accept protocol=icmp
-/ip firewall filter add chain=input action=accept src-address=10.0.0.0/8
-/ip firewall filter add chain=input action=accept src-address=172.16.0.0/12
-/ip firewall filter add chain=input action=accept src-address=192.168.0.0/16
-/ip firewall filter add chain=input action=drop
+/ip firewall filter
+add chain=input action=accept connection-state=established,related comment="Allow established/related"
+add chain=input action=accept protocol=icmp comment="Allow ping"
+
+# Drop private IP ranges (RFC1918) - prevent local/private netscan
+add chain=input action=drop src-address=10.0.0.0/8 comment="Drop private 10.0.0.0/8"
+add chain=input action=drop src-address=172.16.0.0/12 comment="Drop private 172.16.0.0/12"
+add chain=input action=drop src-address=192.168.0.0/16 comment="Drop private 192.168.0.0/16"
+
+# Optional: Drop link-local, multicast, loopback for extra security
+add chain=input action=drop src-address=169.254.0.0/16 comment="Drop link-local"
+add chain=input action=drop src-address=127.0.0.0/8 comment="Drop loopback"
+add chain=input action=drop src-address=224.0.0.0/4 comment="Drop multicast"
+
+# Finally, drop everything else not explicitly allowed
+add chain=input action=drop comment="Drop all other traffic"
+
 
 # Update system packages
 /system package update check-for-updates
